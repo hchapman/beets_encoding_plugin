@@ -58,7 +58,8 @@ def fmt(lib, opts, args):
                 print "The album is %s encoded" %formats[0]
                 album_is_mp3 = formats[0] == "MP3"
             else:
-                print "This is a mutt"
+                print "This is a mutt: format mismatch"
+                print formats
             if album_is_mp3:
                 abr = sum(bitrates)/len(bitrates)
                 print "The average bitrate of the mp3s is %s"%abr
@@ -69,7 +70,8 @@ def fmt(lib, opts, args):
                     else:
                         print "No LAME header or not encoded with a preset"
                 else:
-                    print "This is a mutt"
+                    print "This is a mutt: preset mismatch"
+                    print presets
 
 fmt_cmd.func = fmt
 fmt_cmd.parser.add_option("-a", "--album", action="store_true", help="poop")
