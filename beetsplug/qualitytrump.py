@@ -2,7 +2,7 @@ from beets.plugins import BeetsPlugin
 from beets import ui, util
 from beets import config
 
-from eyed3 import core
+from mutagen.mp3 import MP3
 
 from pprint import pprint
 
@@ -25,9 +25,9 @@ def f():
 def get_item_quality(item):
     preset = None
     if item.format == u'MP3':
-        audio_file = core.load(item.path)
-        lt = audio_file.info.lame_tag
-        if not audio_file or not audio_file.info.lame_tag:
+        audio_file = MP3(item.path)
+        lt = audio_file.info.lame_preset
+        if not audio_file or not audio_file.info.lame_preset:
             pass
         elif lt.has_key('preset'):
             preset = lt['preset']
