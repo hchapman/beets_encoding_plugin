@@ -2,9 +2,14 @@ from beets.plugins import BeetsPlugin
 from beets import ui, util
 from beets import config
 
-from mutagen.mp3 import MP3
+from beets.mediafile import MediaFile
 
 from pprint import pprint
+
+_TRUMP_FORMAT, _TRUMP_PRESET, _TRUMP_BITRATE = (0,1,2)
+_DEFAULT_TRUMP_ORDER = (
+    "FLAC", "V0", "320", "V2", "192", "MP3", "AAC"
+)
 
 # Source: hydrogenaudio.org's LAME article
 mp3_br_ranges = {"320": (320, 320),
@@ -22,31 +27,50 @@ def f():
         item = yield
         print item
 
+_CONSTANT_BITRATES = {320000: "320", 192000: "192"}
+
+def get_canon_preset_name(preset):
+    """ Get a canonical human readable name for LAME presets.
+    Right now we just make, e.g., '-V0n', into 'V0', as is common
+    notation among format enthusiasts.
+    """
+
+    if "-V" in preset:
+        return "V%s"%preset[2+preset.index("-V")]
+    return preset
+
 def get_item_quality(item):
     preset = None
     if item.format == u'MP3':
-        audio_file = MP3(item.path)
-        lt = audio_file.info.lame_preset
-        if not audio_file or not audio_file.info.lame_preset:
-            pass
-        elif lt.has_key('preset'):
-            preset = lt['preset']
+        audio_file = MediaFile(item.path)
+        preset = audio_file.mgfile.info.lame_preset
+        if preset is None:
+            # VBR preset is absent, try to use CBR as quality
+            # Presently I'm not certain there's any way to assert that
+            # the bitrate returned is ABR or an actual CBR
+            if item.bitrate in _CONSTANT_BITRATES:
+                preset = _CONSTANT_BITRATES[item.bitrate]
     return {"preset": preset,
             "bitrate": item.bitrate,
             "format": item.format}
 
-def get_album_quality(album):
+def get_items_quality(items):
     formats = []
     bitrates = []
     presets = []
-    for track in album.items():
+    for track in items:
         q = get_item_quality(track)
         presets.append(q["preset"])
         formats.append(q["format"])
         bitrates.append(q["bitrate"])
     return {"bitrate": sum(bitrates)/len(bitrates),
-            "format": formats[0] if formats.count(formats[0]) == len(formats) else "Mutt",
-            "preset": presets[0] if presets.count(presets[0]) == len(presets) else "Mutt"}
+            "format": (formats[0] if formats.count(formats[0]) == len(formats)
+                       else "Mutt"),
+            "preset": (presets[0] if presets.count(presets[0]) == len(presets)
+                       else "Mutt")}
+
+def get_album_quality(album):
+    return get_items_quality(album.items())
 
 fmt_cmd = ui.Subcommand('fmt', help="do some format nonsense")
 def fmt(lib, opts, args):
@@ -57,7 +81,7 @@ def fmt(lib, opts, args):
     else:
         albums = []
         items = lib.items(ui.decargs(args))
-    
+
     # Try to determine the quality of the album
     if albums:
         for album in albums:
@@ -74,6 +98,9 @@ fmt_cmd.func = fmt
 fmt_cmd.parser.add_option("-a", "--album", action="store_true", help="poop")
 
 class QualityTrumper(BeetsPlugin):
+    def __init__(self):
+        super(QualityTrumper, self).__init__()
+
     def commands(self):
         return [fmt_cmd]
 
@@ -95,3 +122,38 @@ def _tmpl_quality(item):
         return u"MP3 %s"%("None" if not q["preset"] else q["preset"])
     else:
         return u"None" if not q["format"] else q["format"]
+
+def score_quality(quality):
+    # Calculate preset score
+    preset = quality["preset"]
+    fmt = quality["format"]
+    order = _DEFAULT_TRUMP_ORDER
+
+    # Try to calculate preset score
+    if preset is not None and preset.upper() in order:
+        preset_score = order.index(preset.upper())
+    else:
+        preset_score = len(order)
+    # Calculate format score
+    if fmt is not None and fmt.upper() in order:
+        format_score = order.index(fmt.upper())
+    else:
+        format_score = len(order)
+
+    print preset_score, format_score
+    return min(preset_score, format_score)
+
+def comp_quality(qual1, qual2):
+    """ Take two qualities (a dict {format, preset, bitrate}) and
+    compare them.
+    """
+
+    return score_quality(qual2) - score_quality(qual1)
+
+@QualityTrumper.listen('import_task_duplicate')
+def _trump_by_quality(session, task):
+
+    dupeinfo = get_album_quality(task.duplicates[0])
+    newinfo = get_items_quality(task.items)
+    print config["qualitytrump"]["order"].get()
+    print comp_quality(dupeinfo, newinfo)
