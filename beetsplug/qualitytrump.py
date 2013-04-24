@@ -1,10 +1,11 @@
 from beets.plugins import BeetsPlugin
 from beets import ui, util
-from beets import config
+from beets import config, importer
 
 from beets.mediafile import MediaFile
 
 from pprint import pprint
+
 
 _TRUMP_FORMAT, _TRUMP_PRESET, _TRUMP_BITRATE = (0,1,2)
 _DEFAULT_TRUMP_ORDER = (
@@ -29,14 +30,18 @@ def f():
 
 _CONSTANT_BITRATES = {320000: "320", 192000: "192"}
 
-def get_canon_preset_name(preset):
+def get_mp3_preset_name(preset):
     """ Get a canonical human readable name for LAME presets.
     Right now we just make, e.g., '-V0n', into 'V0', as is common
     notation among format enthusiasts.
     """
 
+    preset = preset
     if "-V" in preset:
         return "V%s"%preset[2+preset.index("-V")]
+    elif "-b " in preset:
+        parts = preset.split()
+        return parts[parts.index("-b")+1]
     return preset
 
 def get_item_quality(item):
@@ -125,13 +130,16 @@ def _tmpl_quality(item):
 
 def score_quality(quality):
     # Calculate preset score
-    preset = quality["preset"]
     fmt = quality["format"]
+    preset = None
+    if fmt == "MP3":
+        preset = get_mp3_preset_name(quality["preset"])
     order = _DEFAULT_TRUMP_ORDER
+    print preset,fmt
 
     # Try to calculate preset score
-    if preset is not None and preset.upper() in order:
-        preset_score = order.index(preset.upper())
+    if preset is not None and preset in order:
+        preset_score = order.index(preset)
     else:
         preset_score = len(order)
     # Calculate format score
@@ -150,10 +158,24 @@ def comp_quality(qual1, qual2):
 
     return score_quality(qual2) - score_quality(qual1)
 
-@QualityTrumper.listen('import_task_duplicate')
-def _trump_by_quality(session, task):
+@QualityTrumper.listen('import_task_trump')
+def _trump_by_quality(session, task, duplicates):
+    if task.is_album:
+        task_quality = get_items_quality(task.items)
+        obj_key = 'album'
+        get_obj_quality = get_album_quality
+    else:
+        task_quality = get_item_quality(task.item)
+        obj_key = 'item'
+        get_obj_quality = get_item_quality
 
-    dupeinfo = get_album_quality(task.duplicates[0])
-    newinfo = get_items_quality(task.items)
-    print config["qualitytrump"]["order"].get()
-    print comp_quality(dupeinfo, newinfo)
+    for dupe in duplicates:
+        dupe_quality = get_obj_quality(dupe['album'])
+        if comp_quality(task_quality, dupe_quality) > 0:
+            print "The new album is better quality"
+            dupe['remove'] = True
+        else:
+            print "The new album is worse quality. Skip it."
+            task.set_choice(importer.action.SKIP)
+            task.query_duplicates = False
+            return
